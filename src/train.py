@@ -11,7 +11,6 @@ from collections import defaultdict
 import numpy as np
 
 import faiss
-import tensorflow as tf
 from data_iterator import DataIterator
 from model import *
 from tensorboardX import SummaryWriter
@@ -41,6 +40,7 @@ def load_item_cate(source):
     item_cate = {}
     with open(source, 'r') as f:
         for line in f:
+            # 先移除字符串首尾的空格再按‘,’切分
             conts = line.strip().split(',')
             item_id = int(conts[0])
             cate_id = int(conts[1])
@@ -61,14 +61,11 @@ def evaluate_full(sess, test_data, model, model_path, batch_size, item_cate_map,
 
     item_embs = model.output_item(sess)
 
-    res = faiss.StandardGpuResources()
-    flat_config = faiss.GpuIndexFlatConfig()
-    flat_config.device = 0
-
     try:
-        gpu_index = faiss.GpuIndexFlatIP(res, args.embedding_dim, flat_config)
-        gpu_index.add(item_embs)
+        cpu_index = faiss.IndexFlatL2(args.hidden_units)
+        cpu_index.add(item_embs)
     except Exception as e:
+        print(e)
         return {}
 
     total = 0
@@ -83,7 +80,7 @@ def evaluate_full(sess, test_data, model, model_path, batch_size, item_cate_map,
         user_embs = model.output_user(sess, [hist_item, hist_mask])
 
         if len(user_embs.shape) == 2:
-            D, I = gpu_index.search(user_embs, topN)
+            D, I = cpu_index.search(user_embs, topN)
             for i, iid_list in enumerate(item_id):
                 recall = 0
                 dcg = 0.0
@@ -104,7 +101,7 @@ def evaluate_full(sess, test_data, model, model_path, batch_size, item_cate_map,
         else:
             ni = user_embs.shape[1]
             user_embs = np.reshape(user_embs, [-1, user_embs.shape[-1]])
-            D, I = gpu_index.search(user_embs, topN)
+            D, I = cpu_index.search(user_embs, topN)
             for i, iid_list in enumerate(item_id):
                 recall = 0
                 dcg = 0.0
@@ -153,9 +150,9 @@ def evaluate_full(sess, test_data, model, model_path, batch_size, item_cate_map,
                     total_hitrate += 1
                 if not save:
                     total_diversity += compute_diversity(list(item_list_set), item_cate_map)
-        
+
         total += len(item_id)
-    
+
     recall = total_recall / total
     ndcg = total_ndcg / total
     hitrate = total_hitrate * 1.0 / total
@@ -168,8 +165,6 @@ def evaluate_full(sess, test_data, model, model_path, batch_size, item_cate_map,
 def get_model(dataset, model_type, item_count, batch_size, maxlen):
     if model_type == 'DNN': 
         model = Model_DNN(item_count, args.embedding_dim, args.hidden_size, batch_size, maxlen)
-    elif model_type == 'GRU4REC': 
-        model = Model_GRU4REC(item_count, args.embedding_dim, args.hidden_size, batch_size, maxlen)
     elif model_type == 'MIND':
         relu_layer = True if dataset == 'book' else False
         model = Model_MIND(item_count, args.embedding_dim, args.hidden_size, batch_size, args.num_interest, maxlen, relu_layer=relu_layer)
@@ -182,6 +177,7 @@ def get_model(dataset, model_type, item_count, batch_size, maxlen):
         return
     return model
 
+# 添加实验名称
 def get_exp_name(dataset, model_type, batch_size, lr, maxlen, save=True):
     extr_name = input('Please input the experiment name: ')
     para_name = '_'.join([dataset, model_type, 'b'+str(batch_size), 'lr'+str(lr), 'd'+str(args.embedding_dim), 'len'+str(maxlen)])
@@ -221,14 +217,17 @@ def train(
 
     writer = SummaryWriter('runs/' + exp_name)
 
+
     item_cate_map = load_item_cate(cate_file)
 
     with tf.Session(config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
+        # (user_id_list, item_id_list), (hist_item_list, hist_mask_list)
         train_data = DataIterator(train_file, batch_size, maxlen, train_flag=0)
         valid_data = DataIterator(valid_file, batch_size, maxlen, train_flag=1)
         
         model = get_model(dataset, model_type, item_count, batch_size, maxlen)
-        
+
+        # 初始化参数
         sess.run(tf.global_variables_initializer())
         sess.run(tf.local_variables_initializer())
 
@@ -241,7 +240,14 @@ def train(
             loss_sum = 0.0
             trials = 0
 
+            # train_data: userid, itemid, sql_num
             for src, tgt in train_data:
+                """
+                data_iter[0]: 每一批的所有用户id, [uid1, uid2, ..., uid_batch], batch_size
+                data_iter[1]: 从每一个用户的行为中抽出一个item_id, batch_size
+                data_iter[2]: 每一批每个用户行为序列item_id, [[], [], ..., []], 20(maxLen)
+                data_iter[3]: 标记 , 20(maxLen)
+                """
                 data_iter = prepare_data(src, tgt)
                 loss = model.train(sess, list(data_iter) + [lr])
                 
@@ -348,17 +354,30 @@ if __name__ == '__main__':
     test_name = 'test'
 
     if args.dataset == 'taobao':
-        path = './data/taobao_data/'
+        path = '/content/ComiRec/data/taobao_data/'
         item_count = 1708531
         batch_size = 256
         maxlen = 50
         test_iter = 500
     elif args.dataset == 'book':
-        path = './data/book_data/'
+        path = '/content/ComiRec/data/book_data/'
         item_count = 367983
         batch_size = 128
         maxlen = 20
         test_iter = 1000
+    elif args.dataset == 'ml-1m':
+        path = '/content/ComiRec/data/ml-1m_data/'
+        # path = '../data/ml-1m_data/'
+        item_count = 3417
+        batch_size = 128
+        maxlen = 200
+        test_iter = 100
+    elif args.dataset == 'ml-10m':
+        path = '/content/ComiRec/data/ml-10m_data/'
+        item_count = 10197
+        batch_size = 128
+        maxlen = 200
+        test_iter = 100
     
     train_file = path + args.dataset + '_train.txt'
     valid_file = path + args.dataset + '_valid.txt'
@@ -367,14 +386,14 @@ if __name__ == '__main__':
     dataset = args.dataset
 
     if args.p == 'train':
-        train(train_file=train_file, valid_file=valid_file, test_file=test_file, cate_file=cate_file, 
-              item_count=item_count, dataset=dataset, batch_size=batch_size, maxlen=maxlen, test_iter=test_iter, 
+        train(train_file=train_file, valid_file=valid_file, test_file=test_file, cate_file=cate_file,
+              item_count=item_count, dataset=dataset, batch_size=batch_size, maxlen=maxlen, test_iter=test_iter,
               model_type=args.model_type, lr=args.learning_rate, max_iter=args.max_iter, patience=args.patience)
     elif args.p == 'test':
-        test(test_file=test_file, cate_file=cate_file, item_count=item_count, dataset=dataset, batch_size=batch_size, 
+        test(test_file=test_file, cate_file=cate_file, item_count=item_count, dataset=dataset, batch_size=batch_size,
              maxlen=maxlen, model_type=args.model_type, lr=args.learning_rate)
     elif args.p == 'output':
-        output(item_count=item_count, dataset=dataset, batch_size=batch_size, maxlen=maxlen, 
+        output(item_count=item_count, dataset=dataset, batch_size=batch_size, maxlen=maxlen,
                model_type=args.model_type, lr=args.learning_rate)
     else:
         print('do nothing...')

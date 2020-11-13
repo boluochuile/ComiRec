@@ -26,6 +26,18 @@ def read_from_amazon(source):
             ts = float(r['unixReviewTime'])
             users[uid].append((iid, ts))
 
+def read_from_ratings(source):
+    with open(source, 'r') as f:
+        for line in f:
+            conts = line.strip().split('::')
+            uid = int(conts[0])
+            iid = int(conts[1])
+            if conts[3] != 'pv':
+                continue
+            item_count[iid] += 1
+            ts = int(conts[4])
+            users[uid].append((iid, ts))
+
 def read_from_taobao(source):
     with open(source, 'r') as f:
         for line in f:
@@ -43,6 +55,8 @@ if name == 'book':
     read_from_amazon('reviews_Books_5.json')
 elif name == 'taobao':
     read_from_taobao('UserBehavior.csv')
+elif name == 'ml-1m':
+    read_from_taobao('ratings.dat')
 
 items = list(item_count.items())
 items.sort(key=lambda x:x[1], reverse=True)
