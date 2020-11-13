@@ -354,26 +354,26 @@ if __name__ == '__main__':
     test_name = 'test'
 
     if args.dataset == 'taobao':
-        path = '/content/ComiRec/data/taobao_data/'
+        path = 'data/taobao_data/'
         item_count = 1708531
         batch_size = 256
         maxlen = 50
         test_iter = 500
     elif args.dataset == 'book':
-        path = '/content/ComiRec/data/book_data/'
+        path = 'data/book_data/'
         item_count = 367983
         batch_size = 128
         maxlen = 20
         test_iter = 1000
     elif args.dataset == 'ml-1m':
-        path = '/content/ComiRec/data/ml-1m_data/'
+        path = 'data/ml-1m_data/'
         # path = '../data/ml-1m_data/'
         item_count = 3417
         batch_size = 128
         maxlen = 200
         test_iter = 100
     elif args.dataset == 'ml-10m':
-        path = '/content/ComiRec/data/ml-10m_data/'
+        path = 'data/ml-10m_data/'
         item_count = 10197
         batch_size = 128
         maxlen = 200
